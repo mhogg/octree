@@ -36,6 +36,8 @@ cdef extern from "cOctree.h":
         vector[vector[double]] vertices
         vector[double] N
         double D
+        vector[double] lowVert
+        vector[double] uppVert;
         cTri()
         cTri(int label, vector[vector[double]] vertices)
         void getN()
@@ -48,6 +50,8 @@ cdef extern from "cOctree.h":
         vector[double] position
         vector[cOctNode] branches
         vector[int] data
+        vector[double] low
+        vector[double] upp
         cOctNode()   
         int numPolys()
         bint isLeafNode()
@@ -55,8 +59,12 @@ cdef extern from "cOctree.h":
         
     cdef cppclass cOctree:
         cOctree(vector[vector[double]] vertexCoords3D, vector[vector[int]] polyConnectivity)
+        cOctree()
         int numPolys()
+        int branchOffsets[8][3]
         cOctNode root
+        vector[vector[double]] vertexCoords3D
+        vector[vector[int]] polyConnectivity
         vector[Intersection] findRayIntersect(cLine ray)
         cOctNode* getNodeFromId(string nodeId)
         vector[cTri] polyList		
@@ -73,12 +81,11 @@ cdef class PyOctree:
     cdef public PyOctnode root
     cdef public list polyList
 
-    def __cinit__(self,double[:,::1] _vertexCoords3D, int[:,::1] _polyConnectivity):
+    def __init__(self,double[:,::1] _vertexCoords3D, int[:,::1] _polyConnectivity):
     
         cdef int i, j
         cdef vector[double] coords
         cdef vector[vector[double]] vertexCoords3D
-        
         #print("Setting up vertexCoords3D")
         vertexCoords3D.reserve(_vertexCoords3D.shape[0])
         coords.resize(3)
@@ -101,7 +108,11 @@ cdef class PyOctree:
         # Create cOctree
         #print("Creating cOctree")
         self.thisptr = new cOctree(vertexCoords3D,polyConnectivity)
-            
+
+        # update root and polyList
+        self.__update_root_polyList()
+
+    def __update_root_polyList(self):
         # Get root node
         cdef cOctNode *node = &self.thisptr.root
         self.root = PyOctnode_Init(node,self)
@@ -118,7 +129,41 @@ cdef class PyOctree:
     def __dealloc__(self):
         #print("Deallocating octree")
         del self.thisptr
-        
+
+    def __getstate__(self):
+        # make class serializable with pickle
+        # 'polyList' is not necessary for __setstate__ but complements the representation of the tree in the dict
+        pickle_dict = {'root': self.root.__getstate__(),
+                       'polyList': [poly.__getstate__() for poly in self.polyList],
+                       'thisptr': self.__serialize_cOctree__(self.thisptr),
+                       }
+        return pickle_dict
+
+    def __setstate__(self, state):
+        # make class serializable with pickle
+        self.thisptr = self.__deserialize_cOctree__(state['thisptr'])
+        self.__update_root_polyList()
+
+    cdef __serialize_cOctree__(self, cOctree *c_octree):
+        return {'root': PyOctnode.__serialize_cOctNode__(self.root, &c_octree.root),
+                'vertexCoords3D': c_octree.vertexCoords3D,
+                'polyConnectivity': c_octree.polyConnectivity,
+                'polyList': [__serialize_cTri__(c_octree.polyList[i]) for i in range(int(c_octree.polyList.size()))],
+                }
+
+    cdef cOctree * __deserialize_cOctree__(self, state: dict):
+        cdef vector[cTri] polyList
+        cdef cOctree *c_octree = new cOctree()
+
+        c_octree.root = deref(PyOctnode().__deserialize_cOctNode__(state['root']))
+        c_octree.vertexCoords3D = state['vertexCoords3D']
+        c_octree.polyConnectivity = state['polyConnectivity']
+        for cTri_dict in state['polyList']:
+            polyList.push_back(deref(__deserialize_cTri__(cTri_dict)))
+        c_octree.polyList = polyList
+
+        return c_octree
+
     def getNodesFromLabel(self,int label):
         '''
         getNodesFromLabel(int label)
@@ -372,6 +417,47 @@ cdef class PyOctnode:
         # If parent is None, then cOctNodes are not managed by cOctree
         if self.parent is None:
             del self.thisptr
+
+    def __getstate__(self):
+        # make class serializable with pickle
+        pickle_dict = {'parent': 'tree' if self.parent is not None else None,  # dummy to avoid infinit reference loop
+                       'thisptr': self.__serialize_cOctNode__(self.thisptr)}
+        return pickle_dict
+
+    def __setstate__(self, state):
+        # make class serializable with pickle
+        self.parent = state['parent']
+        self.thisptr = self.__deserialize_cOctNode__(state['thisptr'])
+
+    cdef __serialize_cOctNode__(self, cOctNode *c_octnode):
+        return {'size': c_octnode.size,
+                'level': c_octnode.level,
+                'nid': c_octnode.nid,
+                'position': c_octnode.position,
+                'branches': [self.__serialize_cOctNode__(&c_octnode.branches[i]) for i in range(int(c_octnode.branches.size()))],
+                'data': c_octnode.data,
+                'low': c_octnode.low,
+                'upp': c_octnode.upp,
+                }
+
+    cdef cOctNode * __deserialize_cOctNode__(self, state: dict):
+        cdef cOctNode *c_octnode = new cOctNode()
+        cdef vector[cOctNode] branches
+        cdef vector[double] low
+        cdef vector[double] upp
+
+        c_octnode.size = state['size']
+        c_octnode.level = state['level']
+        c_octnode.nid = state['nid']
+        c_octnode.position = state['position']
+        for cOctNode_dict in state['branches']:
+            branches.push_back(deref(self.__deserialize_cOctNode__(cOctNode_dict)))
+        c_octnode.branches = branches
+        c_octnode.data = state['data']
+        c_octnode.low = state['low']
+        c_octnode.upp = state['upp']
+
+        return c_octnode
         
     def hasPolyLabel(self,label):
         '''
@@ -510,7 +596,7 @@ cdef class PyOctnode:
 cdef class PyTri:
     cdef cTri *thisptr
     cdef public object parent
-    def __cinit__(self,parent=None):
+    def __init__(self,parent=None):
         self.thisptr = NULL
         self.parent  = parent
         # If parent is None, then create a new cTri instance. Otherwise, assume
@@ -525,6 +611,16 @@ cdef class PyTri:
         return "<%s %d>" % ('PyTri', self.label)
     def __repr__(self):
         return "<%s %d>" % ('PyTri', self.label)
+
+    def __getstate__(self):
+        return{'parent': 'tree' if self.parent is not None else None,  # dummy to avoid infinit reference loop
+               'thisptr': __serialize_cTri__(deref(self.thisptr)),
+               }
+
+    def __setstate__(self, state: dict):
+        self.thisptr = __deserialize_cTri__(state['thisptr'])
+        self.parent = state['parent']
+
     cdef printWarningMsg(self,s):
         print('PyTri is managed by PyOctree: %s is read-only' % s)
     property label:
@@ -573,6 +669,31 @@ cdef class PyTri:
         def __set__(self,_D):
             pass
 
+
+cdef __serialize_cTri__(cTri ctri):
+    return {'D': ctri.D,
+            'label': ctri.label,
+            # 'vertices': [ctri.vertices[i][j] for j in range(3) for i in range(int(ctri.vertices.size()))],
+            'vertices': ctri.vertices,
+            # 'N': [ctri.N[i] for i in range(int(ctri.N.size()))],
+            'N': ctri.N,
+            # 'lowVert': [ctri.lowVert[i] for i in range(int(ctri.lowVert.size()))],
+            'lowVert': ctri.lowVert,
+            # 'uppVert': [ctri.uppVert[i] for i in range(int(ctri.uppVert.size()))],
+            'uppVert': ctri.uppVert,
+            }
+
+cdef cTri * __deserialize_cTri__(state: dict):
+    cdef cTri *ctri = new cTri()
+
+    ctri.D = state['D']
+    ctri.label = state['label']
+    ctri.vertices = state['vertices']
+    ctri.N = state['N']
+    ctri.lowVert = state['lowVert']
+    ctri.uppVert = state['uppVert']
+
+    return ctri
 
 # Need a global function to be able to point a cOctNode to a PyOctnode
 cdef PyOctnode_Init(cOctNode *node, object parent):
