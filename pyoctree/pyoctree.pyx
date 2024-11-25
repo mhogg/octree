@@ -132,11 +132,7 @@ cdef class PyOctree:
 
     def __getstate__(self):
         # make class serializable with pickle
-        # 'polyList' is not necessary for __setstate__ but complements the representation of the tree in the dict
-        pickle_dict = {'root': self.root.__getstate__(),
-                       'polyList': [poly.__getstate__() for poly in self.polyList],
-                       'thisptr': self.__serialize_cOctree__(self.thisptr),
-                       }
+        pickle_dict = {'thisptr': self.__serialize_cOctree__(self.thisptr)}
         return pickle_dict
 
     def __setstate__(self, state):
@@ -673,13 +669,9 @@ cdef class PyTri:
 cdef __serialize_cTri__(cTri ctri):
     return {'D': ctri.D,
             'label': ctri.label,
-            # 'vertices': [ctri.vertices[i][j] for j in range(3) for i in range(int(ctri.vertices.size()))],
             'vertices': ctri.vertices,
-            # 'N': [ctri.N[i] for i in range(int(ctri.N.size()))],
             'N': ctri.N,
-            # 'lowVert': [ctri.lowVert[i] for i in range(int(ctri.lowVert.size()))],
             'lowVert': ctri.lowVert,
-            # 'uppVert': [ctri.uppVert[i] for i in range(int(ctri.uppVert.size()))],
             'uppVert': ctri.uppVert,
             }
 
