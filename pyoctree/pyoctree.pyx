@@ -53,6 +53,7 @@ cdef extern from "cOctree.h":
         vector[double] low
         vector[double] upp
         cOctNode()   
+        cOctNode(int _level, string _nid, vector[double] _position, double _size)
         int numPolys()
         bint isLeafNode()
         bint boxRayIntersect(cLine &ray)
@@ -432,26 +433,16 @@ cdef class PyOctnode:
                 'position': c_octnode.position,
                 'branches': [self.__serialize_cOctNode__(&c_octnode.branches[i]) for i in range(int(c_octnode.branches.size()))],
                 'data': c_octnode.data,
-                'low': c_octnode.low,
-                'upp': c_octnode.upp,
                 }
 
     cdef cOctNode * __deserialize_cOctNode__(self, state: dict):
-        cdef cOctNode *c_octnode = new cOctNode()
+        cdef cOctNode *c_octnode = new cOctNode(state['level'], state['nid'], state['position'], state['size'])
         cdef vector[cOctNode] branches
-        cdef vector[double] low
-        cdef vector[double] upp
 
-        c_octnode.size = state['size']
-        c_octnode.level = state['level']
-        c_octnode.nid = state['nid']
-        c_octnode.position = state['position']
         for cOctNode_dict in state['branches']:
             branches.push_back(deref(self.__deserialize_cOctNode__(cOctNode_dict)))
         c_octnode.branches = branches
         c_octnode.data = state['data']
-        c_octnode.low = state['low']
-        c_octnode.upp = state['upp']
 
         return c_octnode
         
