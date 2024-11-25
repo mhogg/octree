@@ -667,24 +667,11 @@ cdef class PyTri:
 
 
 cdef __serialize_cTri__(cTri ctri):
-    return {'D': ctri.D,
-            'label': ctri.label,
-            'vertices': ctri.vertices,
-            'N': ctri.N,
-            'lowVert': ctri.lowVert,
-            'uppVert': ctri.uppVert,
-            }
+    return {'label': ctri.label,
+            'vertices': ctri.vertices}
 
 cdef cTri * __deserialize_cTri__(state: dict):
-    cdef cTri *ctri = new cTri()
-
-    ctri.D = state['D']
-    ctri.label = state['label']
-    ctri.vertices = state['vertices']
-    ctri.N = state['N']
-    ctri.lowVert = state['lowVert']
-    ctri.uppVert = state['uppVert']
-
+    cdef cTri *ctri = new cTri(state['label'], state['vertices'])
     return ctri
 
 # Need a global function to be able to point a cOctNode to a PyOctnode
