@@ -99,7 +99,8 @@ public:
     vector<vector<int> > polyConnectivity;
     vector<cTri> polyList;
     cOctree(vector<vector<double> > _vertexCoords3D, vector<vector<int> > _polyConnectivity);
-    ~cOctree();    
+    cOctree();
+    ~cOctree();
     double getSizeRoot();
     int numPolys();
     cOctNode* getNodeFromId(string nodeId);

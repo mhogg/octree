@@ -36,6 +36,8 @@ cdef extern from "cOctree.h":
         vector[vector[double]] vertices
         vector[double] N
         double D
+        vector[double] lowVert
+        vector[double] uppVert;
         cTri()
         cTri(int label, vector[vector[double]] vertices)
         void getN()
@@ -48,15 +50,22 @@ cdef extern from "cOctree.h":
         vector[double] position
         vector[cOctNode] branches
         vector[int] data
+        vector[double] low
+        vector[double] upp
         cOctNode()   
+        cOctNode(int _level, string _nid, vector[double] _position, double _size)
         int numPolys()
         bint isLeafNode()
         bint boxRayIntersect(cLine &ray)
         
     cdef cppclass cOctree:
         cOctree(vector[vector[double]] vertexCoords3D, vector[vector[int]] polyConnectivity)
+        cOctree()
         int numPolys()
+        int branchOffsets[8][3]
         cOctNode root
+        vector[vector[double]] vertexCoords3D
+        vector[vector[int]] polyConnectivity
         vector[Intersection] findRayIntersect(cLine ray)
         cOctNode* getNodeFromId(string nodeId)
         vector[cTri] polyList		
@@ -65,6 +74,7 @@ cdef extern from "cOctree.h":
         vector[bint] findRayIntersectsSorted(vector[cLine] &rayList)
         set[int] getListPolysToCheck(cLine &ray)
         vector[cOctNode*] getSortedNodesToCheck(cLine &ray)
+        void setupPolyList()
     
     
 cdef class PyOctree:
@@ -73,12 +83,11 @@ cdef class PyOctree:
     cdef public PyOctnode root
     cdef public list polyList
 
-    def __cinit__(self,double[:,::1] _vertexCoords3D, int[:,::1] _polyConnectivity):
+    def __init__(self,double[:,::1] _vertexCoords3D, int[:,::1] _polyConnectivity):
     
         cdef int i, j
         cdef vector[double] coords
         cdef vector[vector[double]] vertexCoords3D
-        
         #print("Setting up vertexCoords3D")
         vertexCoords3D.reserve(_vertexCoords3D.shape[0])
         coords.resize(3)
@@ -101,7 +110,11 @@ cdef class PyOctree:
         # Create cOctree
         #print("Creating cOctree")
         self.thisptr = new cOctree(vertexCoords3D,polyConnectivity)
-            
+
+        # update root and polyList
+        self.__update_root_polyList()
+
+    def __update_root_polyList(self):
         # Get root node
         cdef cOctNode *node = &self.thisptr.root
         self.root = PyOctnode_Init(node,self)
@@ -118,7 +131,17 @@ cdef class PyOctree:
     def __dealloc__(self):
         #print("Deallocating octree")
         del self.thisptr
-        
+
+    def __getstate__(self):
+        # make class serializable with pickle
+        pickle_dict = {'thisptr': __serialize_cOctree__(self.thisptr)}
+        return pickle_dict
+
+    def __setstate__(self, state):
+        # make class serializable with pickle
+        self.thisptr = __deserialize_cOctree__(state['thisptr'])
+        self.__update_root_polyList()
+
     def getNodesFromLabel(self,int label):
         '''
         getNodesFromLabel(int label)
@@ -372,6 +395,17 @@ cdef class PyOctnode:
         # If parent is None, then cOctNodes are not managed by cOctree
         if self.parent is None:
             del self.thisptr
+
+    def __getstate__(self):
+        # make class serializable with pickle
+        pickle_dict = {'parent': 'tree' if self.parent is not None else None,  # dummy to avoid infinit reference loop
+                       'thisptr': __serialize_cOctNode__(self.thisptr)}
+        return pickle_dict
+
+    def __setstate__(self, state):
+        # make class serializable with pickle
+        self.parent = state['parent']
+        self.thisptr = __deserialize_cOctNode__(state['thisptr'])
         
     def hasPolyLabel(self,label):
         '''
@@ -510,7 +544,7 @@ cdef class PyOctnode:
 cdef class PyTri:
     cdef cTri *thisptr
     cdef public object parent
-    def __cinit__(self,parent=None):
+    def __init__(self,parent=None):
         self.thisptr = NULL
         self.parent  = parent
         # If parent is None, then create a new cTri instance. Otherwise, assume
@@ -525,6 +559,7 @@ cdef class PyTri:
         return "<%s %d>" % ('PyTri', self.label)
     def __repr__(self):
         return "<%s %d>" % ('PyTri', self.label)
+
     cdef printWarningMsg(self,s):
         print('PyTri is managed by PyOctree: %s is read-only' % s)
     property label:
@@ -573,7 +608,6 @@ cdef class PyTri:
         def __set__(self,_D):
             pass
 
-
 # Need a global function to be able to point a cOctNode to a PyOctnode
 cdef PyOctnode_Init(cOctNode *node, object parent):
     result = PyOctnode(parent)
@@ -586,3 +620,41 @@ cdef PyTri_Init(cTri *tri, object parent):
     result = PyTri(parent)
     result.thisptr = tri
     return result
+
+
+cdef __serialize_cOctNode__(cOctNode *c_octnode):
+    return {'size': c_octnode.size,
+            'level': c_octnode.level,
+            'nid': c_octnode.nid,
+            'position': c_octnode.position,
+            'branches': [__serialize_cOctNode__(&c_octnode.branches[i]) for i in range(int(c_octnode.branches.size()))],
+            'data': c_octnode.data,
+            }
+
+cdef cOctNode * __deserialize_cOctNode__(state: dict):
+    cdef cOctNode *c_octnode = new cOctNode(state['level'], state['nid'], state['position'], state['size'])
+
+    for cOctNode_dict in state['branches']:
+        c_octnode.branches.push_back(deref(__deserialize_cOctNode__(cOctNode_dict)))
+    c_octnode.data = state['data']
+
+    return c_octnode
+
+cdef __serialize_cOctree__(cOctree *c_octree):
+    cdef int n_polygons = c_octree.polyList.size()
+
+    return {'root': __serialize_cOctNode__(&c_octree.root),
+            'vertexCoords3D': c_octree.vertexCoords3D,
+            'polyConnectivity': c_octree.polyConnectivity,
+            }
+
+cdef cOctree * __deserialize_cOctree__(state: dict):
+    cdef vector[cTri] polyList
+    cdef cOctree *c_octree = new cOctree()
+
+    c_octree.root = deref(__deserialize_cOctNode__(state['root']))
+    c_octree.vertexCoords3D = state['vertexCoords3D']
+    c_octree.polyConnectivity = state['polyConnectivity']
+    c_octree.setupPolyList()
+
+    return c_octree

@@ -333,6 +333,11 @@ bool cOctNode::boxRayIntersect(cLine &ray)
 
 // ------------------------------------------------------
 
+cOctree::cOctree()
+{
+    // Default cOctree constructor
+}
+
 
 cOctree::cOctree(vector<vector<double> > _vertexCoords3D, vector<vector<int> > _polyConnectivity)
 {
