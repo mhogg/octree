@@ -74,6 +74,7 @@ cdef extern from "cOctree.h":
         vector[bint] findRayIntersectsSorted(vector[cLine] &rayList)
         set[int] getListPolysToCheck(cLine &ray)
         vector[cOctNode*] getSortedNodesToCheck(cLine &ray)
+        void setupPolyList()
     
     
 cdef class PyOctree:
@@ -142,10 +143,11 @@ cdef class PyOctree:
         self.__update_root_polyList()
 
     cdef __serialize_cOctree__(self, cOctree *c_octree):
+        cdef int n_polygons = c_octree.polyList.size()
+
         return {'root': PyOctnode.__serialize_cOctNode__(self.root, &c_octree.root),
                 'vertexCoords3D': c_octree.vertexCoords3D,
                 'polyConnectivity': c_octree.polyConnectivity,
-                'polyList': [__serialize_cTri__(c_octree.polyList[i]) for i in range(int(c_octree.polyList.size()))],
                 }
 
     cdef cOctree * __deserialize_cOctree__(self, state: dict):
@@ -155,9 +157,7 @@ cdef class PyOctree:
         c_octree.root = deref(PyOctnode().__deserialize_cOctNode__(state['root']))
         c_octree.vertexCoords3D = state['vertexCoords3D']
         c_octree.polyConnectivity = state['polyConnectivity']
-        for cTri_dict in state['polyList']:
-            polyList.push_back(deref(__deserialize_cTri__(cTri_dict)))
-        c_octree.polyList = polyList
+        c_octree.setupPolyList()
 
         return c_octree
 
